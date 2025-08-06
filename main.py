@@ -1,31 +1,22 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from pydantic import BaseModel
-from google.cloud import translate_v2 as translate
 import requests
 import base64
 from PIL import Image
 from io import BytesIO
-import os
 
 app = FastAPI()
 
-# 🔐 Clave API de Stability
+# 🔐 Tu API key de Stability AI
 STABILITY_API_KEY = "sk-SvUaT8PRAdfe2hdYwti29Wc8bh5FbQZfBuJ4r4h3c3DlweyH"
-
-# Traductor de Google Cloud
-translator = translate.Client()
 
 # Modelo de entrada
 class PromptInput(BaseModel):
     prompt: str
 
-def traducir_a_ingles(texto: str) -> str:
-    result = translator.translate(texto, target_language="en")
-    return result["translatedText"]
-
-def generar_imagen_stability(prompt_ingles: str) -> str:
+def generar_imagen_stability(prompt: str) -> str:
     files = {
-        "prompt": (None, prompt_ingles),
+        "prompt": (None, prompt),
         "output_format": (None, "png"),
     }
 
@@ -40,22 +31,20 @@ def generar_imagen_stability(prompt_ingles: str) -> str:
 
     if response.status_code == 200:
         data = response.json()
-        return data["image"]  # Base64 string
+        return data["image"]  # Imagen codificada en base64
     else:
         raise Exception(f"Error Stability: {response.status_code}, {response.text}")
 
 @app.post("/generate-image")
 async def generate_image(data: PromptInput):
     try:
-        prompt_original = data.prompt
-        prompt_en = traducir_a_ingles(prompt_original)
-        image_base64 = generar_imagen_stability(prompt_en)
-
+        image_base64 = generar_imagen_stability(data.prompt)
         return {
             "success": True,
-            "translated_prompt": prompt_en,
             "image_base64": image_base64
         }
-
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": str(e)
+        }
