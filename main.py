@@ -1,4 +1,5 @@
-from flask import Flask, request, jsonify
+from fastapi import FastAPI, Request
+from pydantic import BaseModel
 from google.cloud import translate_v2 as translate
 import requests
 import base64
@@ -6,22 +7,26 @@ from PIL import Image
 from io import BytesIO
 import os
 
-app = Flask(__name__)
+app = FastAPI()
 
-# Configura tu clave de Stability AI
-STABILITY_API_KEY = "sk-SvUaT8PRAdfe2hdYwti29Wc8bh5FbQZfBuJ4r4h3c3DlweyH"
+# 🔐 Clave API de Stability
+STABILITY_API_KEY = "TU_API_KEY_STABILITY"
 
-# Inicializa el traductor de Google
+# Traductor de Google Cloud
 translator = translate.Client()
 
-def traducir_a_ingles(texto):
-    resultado = translator.translate(texto, target_language='en')
-    return resultado['translatedText']
+# Modelo de entrada
+class PromptInput(BaseModel):
+    prompt: str
 
-def generar_imagen_stability(prompt_ingles):
+def traducir_a_ingles(texto: str) -> str:
+    result = translator.translate(texto, target_language="en")
+    return result["translatedText"]
+
+def generar_imagen_stability(prompt_ingles: str) -> str:
     files = {
         "prompt": (None, prompt_ingles),
-        "output_format": (None, "png")
+        "output_format": (None, "png"),
     }
 
     response = requests.post(
@@ -35,33 +40,22 @@ def generar_imagen_stability(prompt_ingles):
 
     if response.status_code == 200:
         data = response.json()
-        return data["image"]  # Imagen en base64
+        return data["image"]  # Base64 string
     else:
         raise Exception(f"Error Stability: {response.status_code}, {response.text}")
 
-@app.route('/generate-image', methods=['POST'])
-def generar_imagen():
-    data = request.get_json()
-    prompt = data.get("prompt")
-
-    if not prompt:
-        return jsonify({"error": "No se proporcionó ningún prompt."}), 400
-
+@app.post("/generate-image")
+async def generate_image(data: PromptInput):
     try:
-        prompt_traducido = traducir_a_ingles(prompt)
-        print(f"[🔤] Prompt traducido: {prompt_traducido}")
+        prompt_original = data.prompt
+        prompt_en = traducir_a_ingles(prompt_original)
+        image_base64 = generar_imagen_stability(prompt_en)
 
-        imagen_base64 = generar_imagen_stability(prompt_traducido)
-        return jsonify({
+        return {
             "success": True,
-            "image_base64": imagen_base64,
-            "translated_prompt": prompt_traducido
-        })
+            "translated_prompt": prompt_en,
+            "image_base64": image_base64
+        }
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-if __name__ == '__main__':
-    # Establece la ruta de credenciales de Google
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "ruta/a/tu/credenciales.json"
-    app.run(host='0.0.0.0', port=5000)
+        return {"success": False, "error": str(e)}
