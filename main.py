@@ -10,7 +10,7 @@ import os
 app = FastAPI()
 
 # 🔐 Clave API de Stability
-STABILITY_API_KEY = "TU_API_KEY_STABILITY"
+STABILITY_API_KEY = "sk-SvUaT8PRAdfe2hdYwti29Wc8bh5FbQZfBuJ4r4h3c3DlweyH"
 
 # Traductor de Google Cloud
 translator = translate.Client()
