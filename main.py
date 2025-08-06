@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import requests
 import base64
@@ -7,10 +8,19 @@ from io import BytesIO
 
 app = FastAPI()
 
-# 🔐 Tu API key de Stability AI
+# Permitir cualquier origen (cambia esto en producción)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Puedes poner ["https://tuweb.com"] si quieres limitarlo
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# API Key
 STABILITY_API_KEY = "sk-SvUaT8PRAdfe2hdYwti29Wc8bh5FbQZfBuJ4r4h3c3DlweyH"
 
-# Modelo de entrada
+# Entrada
 class PromptInput(BaseModel):
     prompt: str
 
@@ -31,7 +41,7 @@ def generar_imagen_stability(prompt: str) -> str:
 
     if response.status_code == 200:
         data = response.json()
-        return data["image"]  # Imagen codificada en base64
+        return data["image"]
     else:
         raise Exception(f"Error Stability: {response.status_code}, {response.text}")
 
@@ -39,12 +49,6 @@ def generar_imagen_stability(prompt: str) -> str:
 async def generate_image(data: PromptInput):
     try:
         image_base64 = generar_imagen_stability(data.prompt)
-        return {
-            "success": True,
-            "image_base64": image_base64
-        }
+        return {"success": True, "image_base64": image_base64}
     except Exception as e:
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        return {"success": False, "error": str(e)}
