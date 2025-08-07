@@ -1,57 +1,34 @@
-from fastapi import FastAPI, Request
-from pydantic import BaseModel
-from diffusers import DiffusionPipeline
-import torch
-from PIL import Image
+import requests
 import uuid
-import os
 
-# Configuración inicial del modelo
-model_name = "Qwen/Qwen-Image"
+# Reemplaza con tu API key de DeepAI
+API_KEY = "81d53499-be78-4580-8f73-b542389ff0b3"  # Consíguela gratis en https://deepai.org/
 
-if torch.cuda.is_available():
-    torch_dtype = torch.bfloat16
-    device = "cuda"
-else:
-    torch_dtype = torch.float32
-    device = "cpu"
+# Prompt para generar la imagen
+prompt = "A majestic dragon flying over snowy mountains"
 
-pipe = DiffusionPipeline.from_pretrained(model_name, torch_dtype=torch_dtype)
-pipe = pipe.to(device)
+# Solicitud a la API de DeepAI
+response = requests.post(
+    "https://api.deepai.org/api/stable-diffusion",
+    data={"text": prompt},
+    headers={"api-key": API_KEY}
+)
 
-positive_magic = {
-    "en": "Ultra HD, 4K, cinematic composition.",
-}
+if response.status_code == 200:
+    data = response.json()
+    image_url = data["output_url"]
+    print("Imagen generada en:", image_url)
 
-aspect_ratios = {
-    "1:1": (1328, 1328),
-    "16:9": (1664, 928),
-    "9:16": (928, 1664),
-}
-
-app = FastAPI()
-
-class PromptRequest(BaseModel):
-    prompt: str
-    aspect_ratio: str = "16:9"
-
-@app.post("/generate")
-async def generate_image(data: PromptRequest):
-    prompt = data.prompt + positive_magic["en"]
-    negative_prompt = ""
-    width, height = aspect_ratios.get(data.aspect_ratio, aspect_ratios["16:9"])
-
-    image = pipe(
-        prompt=prompt,
-        negative_prompt=negative_prompt,
-        width=width,
-        height=height,
-        num_inference_steps=50,
-        true_cfg_scale=4.0,
-        generator=torch.Generator(device=device).manual_seed(42)
-    ).images[0]
-
+    # Descargar imagen
+    image_response = requests.get(image_url)
     filename = f"image_{uuid.uuid4().hex[:8]}.jpg"
-    image.save(filename, "JPEG")
 
-    return {"message": "✅ Imagen generada", "filename": filename}
+    with open(filename, "wb") as f:
+        f.write(image_response.content)
+
+    print(f"Imagen guardada como {filename}")
+
+else:
+    print("Error al generar la imagen:")
+    print(response.status_code, response.text)
+
