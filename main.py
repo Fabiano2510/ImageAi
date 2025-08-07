@@ -1,16 +1,10 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from io import BytesIO
-import base64
-from PIL import Image
-import torch
-from diffusers import StableDiffusionPipeline
+import requests
 
-# Inicializa FastAPI
 app = FastAPI()
 
-# CORS (para frontend desde otro dominio)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -19,28 +13,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Modelo para recibir el prompt
 class PromptRequest(BaseModel):
     prompt: str
 
-# Cargar el modelo (esto toma unos segundos)
-pipe = StableDiffusionPipeline.from_pretrained(
-    "runwayml/stable-diffusion-v1-5",
-    torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32
-)
-pipe = pipe.to("cuda" if torch.cuda.is_available() else "cpu")
+DEEP_AI_API_KEY = "81d53499-be78-4580-8f73-b542389ff0b3"  # Consíguela gratis en https://deepai.org
 
 @app.post("/generate-image")
 async def generate_image(data: PromptRequest):
-    try:
-        # Generar imagen
-        image = pipe(data.prompt).images[0]
+    response = requests.post(
+        "https://api.deepai.org/api/stable-diffusion",
+        data={"text": data.prompt},
+        headers={"api-key": DEEP_AI_API_KEY}
+    )
 
-        # Convertir a base64
-        buffered = BytesIO()
-        image.save(buffered, format="PNG")
-        img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
-
-        return {"success": True, "image_base64": img_str}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+    if response.status_code == 200:
+        output = response.json()
+        return {"success": True, "image_url": output["output_url"]}
+    else:
+        return {
+            "success": False,
+            "status": response.status_code,
+            "error": response.text
+        }
