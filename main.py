@@ -1,57 +1,42 @@
-from fastapi import FastAPI, Request
-from pydantic import BaseModel
-from diffusers import DiffusionPipeline
+from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from diffusers import KandinskyV22PriorPipeline, KandinskyV22Pipeline
+from diffusers.utils import load_image
 import torch
-from PIL import Image
-import uuid
-import os
-
-# Configuración inicial del modelo
-model_name = "Qwen/Qwen-Image"
-
-if torch.cuda.is_available():
-    torch_dtype = torch.bfloat16
-    device = "cuda"
-else:
-    torch_dtype = torch.float32
-    device = "cpu"
-
-pipe = DiffusionPipeline.from_pretrained(model_name, torch_dtype=torch_dtype)
-pipe = pipe.to(device)
-
-positive_magic = {
-    "en": "Ultra HD, 4K, cinematic composition.",
-}
-
-aspect_ratios = {
-    "1:1": (1328, 1328),
-    "16:9": (1664, 928),
-    "9:16": (928, 1664),
-}
 
 app = FastAPI()
 
-class PromptRequest(BaseModel):
-    prompt: str
-    aspect_ratio: str = "16:9"
+# Cargar modelos al iniciar el servidor
+pipe_prior = KandinskyV22PriorPipeline.from_pretrained(
+    "kandinsky-community/kandinsky-2-2-prior", torch_dtype=torch.float16
+).to("cuda")
 
-@app.post("/generate")
-async def generate_image(data: PromptRequest):
-    prompt = data.prompt + positive_magic["en"]
-    negative_prompt = ""
-    width, height = aspect_ratios.get(data.aspect_ratio, aspect_ratios["16:9"])
+pipe = KandinskyV22Pipeline.from_pretrained(
+    "kandinsky-community/kandinsky-2-2-decoder", torch_dtype=torch.float16
+).to("cuda")
 
-    image = pipe(
-        prompt=prompt,
-        negative_prompt=negative_prompt,
-        width=width,
-        height=height,
-        num_inference_steps=50,
-        true_cfg_scale=4.0,
-        generator=torch.Generator(device=device).manual_seed(42)
-    ).images[0]
 
-    filename = f"image_{uuid.uuid4().hex[:8]}.jpg"
-    image.save(filename, "JPEG")
+@app.get("/generate-image")
+async def generate_image():
+    # Cargar imágenes remotas
+    img1 = load_image(
+        "https://huggingface.co/datasets/hf-internal-testing/diffusers-images/resolve/main/kandinsky/cat.png"
+    )
+    img2 = load_image(
+        "https://huggingface.co/datasets/hf-internal-testing/diffusers-images/resolve/main/kandinsky/starry_night.jpeg"
+    )
 
-    return {"message": "✅ Imagen generada", "filename": filename}
+    # Condiciones y pesos
+    images_texts = ["a cat", img1, img2]
+    weights = [0.3, 0.3, 0.4]
+    prompt = ""
+
+    # Proceso de generación
+    prior_out = pipe_prior.interpolate(images_texts, weights)
+    image = pipe(**prior_out, height=768, width=768).images[0]
+
+    # Guardar imagen como JPG
+    output_path = "output.jpg"
+    image.save(output_path, format="JPEG")
+
+    return FileResponse(output_path, media_type="image/jpeg", filename="output.jpg")
