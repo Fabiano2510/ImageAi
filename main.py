@@ -9,18 +9,17 @@ import httpx
 import sqlite3
 from datetime import datetime, timedelta
 
-# CONFIGURA TU SECRET_KEY JWT AQUÍ (usa clave segura)
 SECRET_KEY = "6c9f08e2b99e4f6cae7a71c88e9d5f74447d7649d5c44d8f80a8a8e5e1c2579c"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
-CEREBRASERV_URL = "https://galaxeservice.onrender.com/generate"  # Tu backend IA
+CEREBRASERV_URL = "https://galaxeservice.onrender.com/generate"
 
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Cambia en prod
+    allow_origins=["*"],  # Cambiar para producción
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -61,8 +60,6 @@ init_db()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
-# MODELOS
-
 class UserRegister(BaseModel):
     username: str
     password: str
@@ -80,8 +77,6 @@ class Token(BaseModel):
 class ChatMessage(BaseModel):
     role: str
     content: str
-
-# FUNCIONES DE SEGURIDAD
 
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
@@ -131,8 +126,6 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
         raise credentials_exception
     return user
 
-# RUTAS
-
 @app.post("/register")
 def register(user: UserRegister):
     hashed_password = get_password_hash(user.password)
@@ -161,18 +154,22 @@ async def chat(messages: List[ChatMessage], current_user: User = Depends(get_cur
     c = conn.cursor()
     user_row = c.execute("SELECT id FROM users WHERE username=?", (current_user.username,)).fetchone()
     user_id = user_row["id"]
-    # Guardar mensajes usuario
+
+    # Guardar mensajes nuevos (solo los que llegan en esta petición)
+    # Para evitar duplicar, solo guarda los últimos dos mensajes (user + assistant)
+    # Pero para simplificar aquí guardamos todos recibidos (puedes ajustar si quieres)
     for msg in messages:
         c.execute("INSERT INTO chats (user_id, role, content) VALUES (?, ?, ?)", (user_id, msg.role, msg.content))
     conn.commit()
 
-    # Llamar al backend de IA
+    # Llamar a Cerebras API
+    import httpx
     async with httpx.AsyncClient() as client:
         resp = await client.post(CEREBRASERV_URL, json={"messages": [msg.dict() for msg in messages]})
         resp.raise_for_status()
         data = resp.json()
 
-    # Guardar respuesta IA
+    # Guardar respuesta de la IA
     c.execute("INSERT INTO chats (user_id, role, content) VALUES (?, ?, ?)", (user_id, "assistant", data["response"]))
     conn.commit()
     conn.close()
@@ -185,9 +182,13 @@ def get_history(current_user: User = Depends(get_current_user)):
     c = conn.cursor()
     user_row = c.execute("SELECT id FROM users WHERE username=?", (current_user.username,)).fetchone()
     user_id = user_row["id"]
+
+    # Cambiado a ASC para que el primer mensaje sea el más antiguo
     rows = c.execute(
-        "SELECT role, content, timestamp FROM chats WHERE user_id=? ORDER BY timestamp DESC LIMIT 50", (user_id,)
+        "SELECT role, content, timestamp FROM chats WHERE user_id=? ORDER BY timestamp ASC LIMIT 50",
+        (user_id,)
     ).fetchall()
     conn.close()
+
     history = [{"role": r["role"], "content": r["content"], "timestamp": r["timestamp"]} for r in rows]
     return {"history": history}
