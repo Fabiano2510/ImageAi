@@ -7,29 +7,25 @@ from passlib.context import CryptContext
 from typing import List
 import httpx
 import sqlite3
-import os
 from datetime import datetime, timedelta
 
-# Configuraciones JWT
-SECRET_KEY = "6c9f08e2b99e4f6cae7a71c88e9d5f74447d7649d5c44d8f80a8a8e5e1c2579c"  # Cambia en producción
+# CONFIGURA TU SECRET_KEY JWT AQUÍ (usa clave segura)
+SECRET_KEY = "6c9f08e2b99e4f6cae7a71c88e9d5f74447d7649d5c44d8f80a8a8e5e1c2579c"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
-# Configuración de CerebrasServ (el backend que creamos antes)
-CEREBRASERV_URL = "https://galaxeservice.onrender.com/generate"
+CEREBRASERV_URL = "https://galaxeservice.onrender.com/generate"  # Tu backend IA
 
-# Inicializar FastAPI
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Cambia para restringir en producción
+    allow_origins=["*"],  # Cambia en prod
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# DB SQLite (archivo)
 DB_PATH = "galaxeai.db"
 
 def get_db():
@@ -39,17 +35,15 @@ def get_db():
 
 def init_db():
     conn = get_db()
-    cursor = conn.cursor()
-    # Usuarios
-    cursor.execute('''
+    c = conn.cursor()
+    c.execute('''
     CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE NOT NULL,
         hashed_password TEXT NOT NULL
     )
     ''')
-    # Historial chats
-    cursor.execute('''
+    c.execute('''
     CREATE TABLE IF NOT EXISTS chats (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL,
@@ -64,9 +58,14 @@ def init_db():
 
 init_db()
 
-# Seguridad y hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+# MODELOS
+
+class UserRegister(BaseModel):
+    username: str
+    password: str
 
 class User(BaseModel):
     username: str
@@ -82,7 +81,8 @@ class ChatMessage(BaseModel):
     role: str
     content: str
 
-# Funciones de seguridad
+# FUNCIONES DE SEGURIDAD
+
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
 
@@ -91,9 +91,9 @@ def get_password_hash(password):
 
 def get_user(username: str):
     conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM users WHERE username=?", (username,))
-    row = cursor.fetchone()
+    c = conn.cursor()
+    c.execute("SELECT * FROM users WHERE username=?", (username,))
+    row = c.fetchone()
     conn.close()
     if row:
         return UserInDB(username=row["username"], hashed_password=row["hashed_password"])
@@ -131,15 +131,15 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
         raise credentials_exception
     return user
 
-# Rutas
+# RUTAS
 
 @app.post("/register")
-def register(user: User, password: str):
-    hashed_password = get_password_hash(password)
+def register(user: UserRegister):
+    hashed_password = get_password_hash(user.password)
     conn = get_db()
-    cursor = conn.cursor()
+    c = conn.cursor()
     try:
-        cursor.execute("INSERT INTO users (username, hashed_password) VALUES (?,?)", (user.username, hashed_password))
+        c.execute("INSERT INTO users (username, hashed_password) VALUES (?,?)", (user.username, hashed_password))
         conn.commit()
         return {"msg": "Usuario creado"}
     except sqlite3.IntegrityError:
@@ -157,30 +157,23 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()):
 
 @app.post("/chat")
 async def chat(messages: List[ChatMessage], current_user: User = Depends(get_current_user)):
-    # Guardar mensajes entrantes en DB
     conn = get_db()
-    cursor = conn.cursor()
-    user_row = cursor.execute("SELECT id FROM users WHERE username=?", (current_user.username,)).fetchone()
+    c = conn.cursor()
+    user_row = c.execute("SELECT id FROM users WHERE username=?", (current_user.username,)).fetchone()
     user_id = user_row["id"]
+    # Guardar mensajes usuario
     for msg in messages:
-        cursor.execute(
-            "INSERT INTO chats (user_id, role, content) VALUES (?, ?, ?)",
-            (user_id, msg.role, msg.content)
-        )
+        c.execute("INSERT INTO chats (user_id, role, content) VALUES (?, ?, ?)", (user_id, msg.role, msg.content))
     conn.commit()
 
-    # Llamar a galaxeaiserv para obtener respuesta
-    payload = {"messages": [msg.dict() for msg in messages]}
+    # Llamar al backend de IA
     async with httpx.AsyncClient() as client:
-        resp = await client.post(CEREBRASERV_URL, json=payload)
+        resp = await client.post(CEREBRASERV_URL, json={"messages": [msg.dict() for msg in messages]})
         resp.raise_for_status()
         data = resp.json()
 
-    # Guardar respuesta en DB
-    cursor.execute(
-        "INSERT INTO chats (user_id, role, content) VALUES (?, ?, ?)",
-        (user_id, "assistant", data["response"])
-    )
+    # Guardar respuesta IA
+    c.execute("INSERT INTO chats (user_id, role, content) VALUES (?, ?, ?)", (user_id, "assistant", data["response"]))
     conn.commit()
     conn.close()
 
@@ -189,10 +182,10 @@ async def chat(messages: List[ChatMessage], current_user: User = Depends(get_cur
 @app.get("/history")
 def get_history(current_user: User = Depends(get_current_user)):
     conn = get_db()
-    cursor = conn.cursor()
-    user_row = cursor.execute("SELECT id FROM users WHERE username=?", (current_user.username,)).fetchone()
+    c = conn.cursor()
+    user_row = c.execute("SELECT id FROM users WHERE username=?", (current_user.username,)).fetchone()
     user_id = user_row["id"]
-    rows = cursor.execute(
+    rows = c.execute(
         "SELECT role, content, timestamp FROM chats WHERE user_id=? ORDER BY timestamp DESC LIMIT 50", (user_id,)
     ).fetchall()
     conn.close()
