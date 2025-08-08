@@ -3,5 +3,4 @@ uvicorn
 python-jose[cryptography]
 passlib[bcrypt]
 httpx
-sqlite3
 python-dotenv
