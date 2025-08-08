@@ -1,11 +1,10 @@
-from fastapi import FastAPI, Depends, HTTPException, status
+ from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from typing import List
-import httpx
 import sqlite3
 from datetime import datetime, timedelta
 
@@ -155,14 +154,19 @@ async def chat(messages: List[ChatMessage], current_user: User = Depends(get_cur
     user_row = c.execute("SELECT id FROM users WHERE username=?", (current_user.username,)).fetchone()
     user_id = user_row["id"]
 
-    # Guardar mensajes nuevos (solo los que llegan en esta petición)
-    # Para evitar duplicar, solo guarda los últimos dos mensajes (user + assistant)
-    # Pero para simplificar aquí guardamos todos recibidos (puedes ajustar si quieres)
-    for msg in messages:
-        c.execute("INSERT INTO chats (user_id, role, content) VALUES (?, ?, ?)", (user_id, msg.role, msg.content))
-    conn.commit()
+    # Solo guarda el último mensaje del usuario (nuevo)
+    last_user_msg = None
+    for msg in reversed(messages):
+        if msg.role == "user":
+            last_user_msg = msg
+            break
 
-    # Llamar a Cerebras API
+    if last_user_msg:
+        c.execute("INSERT INTO chats (user_id, role, content) VALUES (?, ?, ?)",
+                  (user_id, last_user_msg.role, last_user_msg.content))
+        conn.commit()
+
+    # Llamar a Cerebras API con todo el historial para contexto
     import httpx
     async with httpx.AsyncClient() as client:
         resp = await client.post(CEREBRASERV_URL, json={"messages": [msg.dict() for msg in messages]})
@@ -170,7 +174,8 @@ async def chat(messages: List[ChatMessage], current_user: User = Depends(get_cur
         data = resp.json()
 
     # Guardar respuesta de la IA
-    c.execute("INSERT INTO chats (user_id, role, content) VALUES (?, ?, ?)", (user_id, "assistant", data["response"]))
+    c.execute("INSERT INTO chats (user_id, role, content) VALUES (?, ?, ?)",
+              (user_id, "assistant", data["response"]))
     conn.commit()
     conn.close()
 
@@ -183,7 +188,7 @@ def get_history(current_user: User = Depends(get_current_user)):
     user_row = c.execute("SELECT id FROM users WHERE username=?", (current_user.username,)).fetchone()
     user_id = user_row["id"]
 
-    # Cambiado a ASC para que el primer mensaje sea el más antiguo
+    # Orden ascendente para mostrar del más antiguo al más reciente
     rows = c.execute(
         "SELECT role, content, timestamp FROM chats WHERE user_id=? ORDER BY timestamp ASC LIMIT 50",
         (user_id,)
